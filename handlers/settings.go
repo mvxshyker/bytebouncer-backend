@@ -70,8 +70,8 @@ func SettingsBlocklists(db *database.Pool, dns *services.Client) fiber.Handler {
 		if err != nil {
 			return err
 		}
-		if err := dns.Toggle(c.Context(), profileID, "privacy/blocklists", "adguard", enabled); err != nil {
-			log.Printf("error: toggle blocklists/adguard: %v", err)
+		if err := dns.Toggle(c.Context(), profileID, "privacy/blocklists", "adguard-dns-filter", enabled); err != nil {
+			log.Printf("error: toggle blocklists/adguard-dns-filter: %v", err)
 			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "failed to update settings"})
 		}
 		return c.JSON(fiber.Map{"ok": true})

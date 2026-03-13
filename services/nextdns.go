@@ -121,15 +121,23 @@ func (c *Client) GetAnalytics(ctx context.Context, profileID string) (*Analytics
 			return
 		}
 		var resp struct {
-			Data struct {
-				Blocked int `json:"blocked"`
-			} `json:"data"`
+			Data json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(data, &resp); err != nil {
 			statusCh <- statusResult{err: err}
 			return
 		}
-		statusCh <- statusResult{blocked: resp.Data.Blocked}
+		// NextDNS returns [] when no traffic, or {"blocked": N} otherwise
+		var status struct {
+			Blocked int `json:"blocked"`
+		}
+		if len(resp.Data) > 0 && resp.Data[0] == '{' {
+			if err := json.Unmarshal(resp.Data, &status); err != nil {
+				statusCh <- statusResult{err: err}
+				return
+			}
+		}
+		statusCh <- statusResult{blocked: status.Blocked}
 	}()
 
 	go func() {
@@ -177,18 +185,44 @@ func (c *Client) GetAnalytics(ctx context.Context, profileID string) (*Analytics
 
 func (c *Client) Toggle(ctx context.Context, profileID, subPath, id string, enabled bool) error {
 	path := fmt.Sprintf("/profiles/%s/%s", profileID, subPath)
+	var data []byte
 	var status int
 	var err error
 	if enabled {
-		_, status, err = c.do(ctx, "POST", path, map[string]string{"id": id})
+		data, status, err = c.do(ctx, "POST", path, map[string]string{"id": id})
 	} else {
-		_, status, err = c.do(ctx, "DELETE", fmt.Sprintf("%s/%s", path, id), nil)
+		data, status, err = c.do(ctx, "DELETE", fmt.Sprintf("%s/%s", path, id), nil)
 	}
 	if err != nil {
 		return err
+	}
+	// NextDNS returns 400 with "duplicate" when item is already enabled,
+	// and 404 when deleting something already removed — both are idempotent successes.
+	if status == 400 && isDuplicate(data) {
+		return nil
+	}
+	if status == 404 && !enabled {
+		return nil
 	}
 	if status != 200 && status != 201 && status != 204 {
 		return fmt.Errorf("nextdns toggle %s/%s enabled=%v: status %d", subPath, id, enabled, status)
 	}
 	return nil
+}
+
+func isDuplicate(data []byte) bool {
+	var resp struct {
+		Errors []struct {
+			Code string `json:"code"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return false
+	}
+	for _, e := range resp.Errors {
+		if e.Code == "duplicate" {
+			return true
+		}
+	}
+	return false
 }
