@@ -14,10 +14,28 @@ type settingsRequest struct {
 	Enabled  bool   `json:"enabled"`
 }
 
-// lookupProfile parses the request body and resolves the NextDNS profile ID.
+// lookupProfile resolves the NextDNS profile ID and enabled flag.
+// Supports both JWT auth (user_id from locals) and legacy (device_id from body).
 func lookupProfile(c *fiber.Ctx, db *database.Pool) (profileID string, enabled bool, err error) {
 	var req settingsRequest
-	if parseErr := c.BodyParser(&req); parseErr != nil || req.DeviceID == "" {
+	if parseErr := c.BodyParser(&req); parseErr != nil {
+		return "", false, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+
+	// JWT auth path
+	if userID, ok := c.Locals("user_id").(string); ok && userID != "" {
+		user, dbErr := database.GetUserByID(c.Context(), db, userID)
+		if dbErr != nil {
+			return "", false, c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+		}
+		if user.ProfileID == "" {
+			return "", false, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "not onboarded"})
+		}
+		return user.ProfileID, req.Enabled, nil
+	}
+
+	// Legacy path
+	if req.DeviceID == "" {
 		return "", false, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "device_id required"})
 	}
 	user, dbErr := database.GetUserByDeviceID(c.Context(), db, req.DeviceID)

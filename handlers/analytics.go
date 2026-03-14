@@ -9,6 +9,23 @@ import (
 
 func Analytics(db *database.Pool, dns *services.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// JWT auth path
+		if userID, ok := c.Locals("user_id").(string); ok && userID != "" {
+			user, err := database.GetUserByID(c.Context(), db, userID)
+			if err != nil {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+			}
+			if user.ProfileID == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "not onboarded"})
+			}
+			analytics, err := dns.GetAnalytics(c.Context(), user.ProfileID)
+			if err != nil {
+				return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "failed to fetch analytics"})
+			}
+			return c.JSON(analytics)
+		}
+
+		// Legacy path: device_id from query param
 		deviceID := c.Query("device_id")
 		if deviceID == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "device_id required"})
